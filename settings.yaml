@@ -1,0 +1,13 @@
+module:
+    xname: softflow
+    xconfig:
+        xport: 9998
+        xhost: 0.0.0.0
+    name: http
+    config:
+        file: "/home/jakobant/PycharmProjects/demokobbi/logs/kobbi.log"
+        file_type: "flat"
+        exclude_status: ""
+        udp_server: "127.0.0.1"
+        udp_port: 9991
+
