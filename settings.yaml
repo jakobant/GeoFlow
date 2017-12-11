@@ -10,4 +10,7 @@ module:
         exclude_status: ""
         udp_server: "127.0.0.1"
         udp_port: 9991
+        json_ip: "{'path': ['@fields', 'remote_addr']}"
+        json_status: "{'path': ['@fields', 'status']}"
+        json_request: "{'path': ['@fields', 'request']}"
 
