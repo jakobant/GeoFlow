@@ -28,7 +28,7 @@ class WebSocketChatHandler(tornado.websocket.WebSocketHandler):
             self.client = tornadoredis.Client('127.0.0.1')
             self.client.connect()
             print('[*] Connected to Redis server')
-            yield tornado.gen.Task(self.client.subscribe, 'netflow-map')
+            yield tornado.gen.Task(self.client.subscribe, 'geo-data-flow')
             self.client.listen(self.on_message)
         except Exception as ex:
             print('[*] Could not connect to Redis server.')
@@ -51,16 +51,7 @@ class WebSocketChatHandler(tornado.websocket.WebSocketHandler):
 
         print(json_data)
 
-        fat = json_data['fat']
-        src_ip = json_data['src_ip']
-        dst_ip = json_data['dst_ip']
-        msg_to_send = {
-                        'fat': fat,
-                        'src_ip': src_ip,
-                        'dst_ip': dst_ip
-        }
-
-        self.write_message(json.dumps(msg_to_send))
+        self.write_message(json.dumps(json_data))
 
 
 def main():

@@ -1,8 +1,11 @@
 import yaml
 import re
-from pygtail import Pygtail
 import socket
 import maxminddb
+import json
+import redis
+from pygtail import Pygtail
+from json.decoder import JSONDecodeError
 import logging
 
 class YamlConfig:
@@ -36,6 +39,27 @@ class UDPClient:
     def send_message(self, message):
         self.sock.sendto(message.encode(), self.server_address)
 
+class UDPServer:
+
+    """Main udt server listner"""
+
+    def __init__(self, udp_port):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.server_address = ('0.0.0.0', udp_port)
+        self.sock.bind(self.server_address)
+
+    def get_messages(self):
+        return self.sock.recvfrom(4096)
+
+class RedisClient:
+
+    def __init__(self, config):
+        self.r = redis.StrictRedis(host=config['redis_server'], port=6379, db=0)
+
+    def publish_to_topic(self, topic, message):
+        self.r.publish(topic, json.dumps(message))
+
+
 class HttpAgent:
 
     """Main http file agent collector"""
@@ -56,7 +80,58 @@ class HttpAgent:
     def tail_file(self):
         return Pygtail(self.file)
 
-    def get_tag(self, log, tags):
+    def parse_log(self, log_line):
+        """137.74.207.110 - - [10/Dec/2017:15:23:35 +0200] "GET /ar/occasions/details/2930 HTTP/1.1" 200 38658 "-" "Mozilla/5.0 (compatible; AhrefsBot/5.2; +http://ahrefs.com/robot/)"
+            217.21.0.92 - - [10/Dec/2017:15:24:33 +0200] "GET / HTTP/1.1" 200 71483 "-" "check_http/v1.4.15
+        { "@timestamp": "2017-12-11T14:00:01+00:00", "geoip.country_name": "Australia", "geoip.country_code": "AU", "geoip.location": { "lat": "-33.2744", "lon": "151.5461" }, "@source_host": "public-dispatcher-deployment-1211055930-28cjc", "@fields": { "remote_addr": "1.43.193.104", "upstream_addr": "172.16.108.209:80", "request_length": 2774, "upstream_response_time": 0.510, "remote_user": "-", "body_bytes_sent": 1532, "request_time": 0.512, "status": "200", "request": "GET /rest/tempo-timesheets/3/period/ HTTP/1.1", "request_method": "GET", "http_referrer": "https://app.tempo.io/timesheets/jira/agile-issue-panel/NA/157541/NA-109/?can_log_work_for_others=false&can_set_billable_hours=false&can_view_all_worklogs=true&is_jira_admin=false&is_tempo_account_admin=false&is_tempo_admin=false&is_tempo_team_admin=true&is_tempo_timetracking=true&perm_delete_all_worklogs=true&perm_delete_own_worklogs=true&perm_edit_all_worklogs=false&perm_edit_own_worklogs=true&perm_work_on_issues=true&tz=Europe%2FMinsk&loc=en-US&user_id=igor.trandafilov&user_key=i.trandafilov&xdm_e=https%3A%2F%2Fisportal.atlassian.net&xdm_c=channel-is.origo.jira.tempo-plugin__tempo-ghx-issue-panel-worklogs&cp=&xdm_deprecated_addon_key_do_not_use=is.origo.jira.tempo-plugin&lic=active&cv=1.3.392&jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJpLnRyYW5kYWZpbG92IiwicXNoIjoiMGIxMzc2ODRmNWRlMWE0ZDQ5OGI5Mjc1ZGQ3MTI2YWNhNTUzMjRhMmYxMzRiMjdhMzBlMzYzMjM5ODhjZjMxNSIsImlzcyI6ImppcmE6MTEwMDEyMjUiLCJjb250ZXh0Ijp7InVzZXIiOnsidXNlcktleSI6ImkudHJhbmRhZmlsb3YiLCJ1c2VybmFtZSI6Imlnb3IudHJhbmRhZmlsb3YiLCJkaXNwbGF5TmFtZSI6Iklnb3IgVHJhbmRhZmlsb3YifX0sImV4cCI6MTUxMzAwMDk3OSwiaWF0IjoxNTEzMDAwNzk5fQ.-nfpZVHQqfuKa9sQnnfI7zfnsA8mhCxReKmsoiC4XRQ", "tempo_request_id": "1513000800915970667ea94acf18928a", "tenant_id": "6a3b6afd-acb2-4cd0-afcb-680ab6687556", "levelname": "INFO", "http_user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.94 Safari/537.36" } }"""
+
+        if self.file_type == 'json':
+            return self._parse_json_file(log_line)
+        else:
+            return self._parse_flat_file(log_line)
+
+
+    def _parse_json_file(self, log_line):
+        try:
+            jsonline=json.loads(log_line.replace(' -', ' 0'))
+        except JSONDecodeError:
+            return None
+        ip = self._get_tag(jsonline, self.json_ip)
+        status = self._get_tag(jsonline, self.json_status)
+        if status in self.exclude_status:
+            return None
+        request = self._get_tag(jsonline, self.json_request).split(' ')
+        path = self._clean_url(request[1])
+        method = request[0]
+        return '{},{},{},{}'.format(ip, status, method, path)
+
+    def _parse_flat_file(self, log_line):
+        m = re.match(self.match, log_line)
+        if m:
+            if m.group('status') in self.exclude_status:
+                return None
+            else:
+                return '{},{},{},{}'.format(m.group('ip'), m.group('status'), m.group('method'),
+                                            self._clean_url(m.group('path')))
+        else:
+            return None
+
+    def _clean_url(self, url):
+        s_url = url.split('/')
+        s_length = len(s_url)
+        if s_length > 3:
+            s_length = 3
+        a = 1
+        r_url = ""
+        while a < s_length:
+            r_url += s_url[a].split('?')[0] + "-"
+            a += 1
+        if r_url == '-':
+            return "root"
+        else:
+            return r_url[:-1]
+
+    def _get_tag(self, log, tags):
         clean = log
         for node in tags['path']:
             if node in clean:
@@ -64,35 +139,6 @@ class HttpAgent:
             else:
                 clean = None
         return clean
-
-    def parse_log(self, log_line):
-        """137.74.207.110 - - [10/Dec/2017:15:23:35 +0200] "GET /ar/occasions/details/2930 HTTP/1.1" 200 38658 "-" "Mozilla/5.0 (compatible; AhrefsBot/5.2; +http://ahrefs.com/robot/)"
-            217.21.0.92 - - [10/Dec/2017:15:24:33 +0200] "GET / HTTP/1.1" 200 71483 "-" "check_http/v1.4.15
-        { "@timestamp": "2017-12-11T14:00:01+00:00", "geoip.country_name": "Australia", "geoip.country_code": "AU", "geoip.location": { "lat": "-33.2744", "lon": "151.5461" }, "@source_host": "public-dispatcher-deployment-1211055930-28cjc", "@fields": { "remote_addr": "1.43.193.104", "upstream_addr": "172.16.108.209:80", "request_length": 2774, "upstream_response_time": 0.510, "remote_user": "-", "body_bytes_sent": 1532, "request_time": 0.512, "status": "200", "request": "GET /rest/tempo-timesheets/3/period/ HTTP/1.1", "request_method": "GET", "http_referrer": "https://app.tempo.io/timesheets/jira/agile-issue-panel/NA/157541/NA-109/?can_log_work_for_others=false&can_set_billable_hours=false&can_view_all_worklogs=true&is_jira_admin=false&is_tempo_account_admin=false&is_tempo_admin=false&is_tempo_team_admin=true&is_tempo_timetracking=true&perm_delete_all_worklogs=true&perm_delete_own_worklogs=true&perm_edit_all_worklogs=false&perm_edit_own_worklogs=true&perm_work_on_issues=true&tz=Europe%2FMinsk&loc=en-US&user_id=igor.trandafilov&user_key=i.trandafilov&xdm_e=https%3A%2F%2Fisportal.atlassian.net&xdm_c=channel-is.origo.jira.tempo-plugin__tempo-ghx-issue-panel-worklogs&cp=&xdm_deprecated_addon_key_do_not_use=is.origo.jira.tempo-plugin&lic=active&cv=1.3.392&jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJpLnRyYW5kYWZpbG92IiwicXNoIjoiMGIxMzc2ODRmNWRlMWE0ZDQ5OGI5Mjc1ZGQ3MTI2YWNhNTUzMjRhMmYxMzRiMjdhMzBlMzYzMjM5ODhjZjMxNSIsImlzcyI6ImppcmE6MTEwMDEyMjUiLCJjb250ZXh0Ijp7InVzZXIiOnsidXNlcktleSI6ImkudHJhbmRhZmlsb3YiLCJ1c2VybmFtZSI6Imlnb3IudHJhbmRhZmlsb3YiLCJkaXNwbGF5TmFtZSI6Iklnb3IgVHJhbmRhZmlsb3YifX0sImV4cCI6MTUxMzAwMDk3OSwiaWF0IjoxNTEzMDAwNzk5fQ.-nfpZVHQqfuKa9sQnnfI7zfnsA8mhCxReKmsoiC4XRQ", "tempo_request_id": "1513000800915970667ea94acf18928a", "tenant_id": "6a3b6afd-acb2-4cd0-afcb-680ab6687556", "levelname": "INFO", "http_user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.94 Safari/537.36" } }"""
-        m = re.match(self.match, log_line)
-        if m:
-            if m.group('status') in self.exclude_status:
-                return None
-            else:
-                return '{},{},{},{}'.format(m.group('ip'), m.group('status'), m.group('method'),
-                                        self.clean_url(m.group('path')))
-        else:
-            return None
-
-    def clean_url(self, url):
-        s_url = url.split('/')
-        s_length = len(s_url)
-        if s_length > 3:
-            s_length = 3
-        a = 1
-        r_url = ""
-        while a < s_length :
-            r_url += s_url[a].split('?')[0] + "-"
-            a += 1
-        if r_url == '-':
-            return "root"
-        else:
-            return r_url[:-1]
 
 
 class MaxmindDB:

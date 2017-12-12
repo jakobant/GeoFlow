@@ -1,39 +1,55 @@
 
-import socket
-from utils import MaxmindDB
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-server_address = ('localhost', 9991)
-sock.bind(server_address)
-readmax = MaxmindDB({'maxminddb_path': './db/GeoLite2-City.mmdb'})
+from utils import MaxmindDB, YamlConfig, UDPServer, RedisClient
+import threading
 
-c = 0
-count = {}
-while True:
-    data, address = sock.recvfrom(4096)
-    ip, status, method, path = data.decode().split(',')
-    geo_data = readmax.get_geodata(ip)
-    try:
-        count['{}|{}|{}'.format(ip, status, method)] += 1
-    except KeyError:
-        count['{}|{}|{}'.format(ip, status, method)] = 1
+class SuperServer:
 
-    c += 1
-    if c == 10:
-        for key in count:
+    """Init super server"""
+
+    def __init__(self):
+        self.config = YamlConfig('settings.yaml').get_config()
+        self.readmax = MaxmindDB(self.config['module']['config'])
+        self.server = UDPServer(int(self.config['module']['config']['udp_port']))
+        self.r = RedisClient({'redis_server': '127.0.0.1'})
+        self.counters = {}
+        self.lock = threading.Lock()
+
+    def main(self):
+        self.counters = {}
+        t = threading.Timer(0.1, self._send_to_redis)
+        t.start()
+        while True:
+            data, address = self.server.get_messages()
+            ip, status, method, path = data.decode().split(',')
+            self.lock.acquire()
+            try:
+                self.counters['{}|{}|{}'.format(ip, status, method)] += 1
+            except KeyError:
+                self.counters['{}|{}|{}'.format(ip, status, method)] = 1
+            self.lock.release()
+
+    def _send_to_redis(self):
+        print("Dumping counters")
+        self.lock.acquire()
+        for key in self.counters:
             iip, sstatus, mmethod = key.split('|')
+            geo_data = self.readmax.get_geodata(iip)
             rdata = {
                 'ip': iip,
                 'status': sstatus,
                 'method': mmethod,
                 'path': '',
-                'count': count[key],
+                'count': self.counters[key],
                 'geo': geo_data
             }
-            print(rdata)
-        c = 0
-        count = {}
-        print("-------------------------------")
+            self.r.publish_to_topic('geo-data-flow', rdata)
+        self.counters = {}
+        self.lock.release()
+        threading.Timer(0.1, self._send_to_redis).start()
 
 
+if __name__ == "__main__":
+    server = SuperServer()
+    server.main()
 
