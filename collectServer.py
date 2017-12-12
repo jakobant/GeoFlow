@@ -30,7 +30,7 @@ class SuperServer:
             self.lock.release()
 
     def _send_to_redis(self):
-        print("Dumping counters")
+        #print("Dumping counters")
         self.lock.acquire()
         for key in self.counters:
             iip, sstatus, mmethod = key.split('|')

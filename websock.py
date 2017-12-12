@@ -49,7 +49,7 @@ class WebSocketChatHandler(tornado.websocket.WebSocketHandler):
         except Exception as ex:
             return None
 
-        print(json_data)
+        #print(json_data)
 
         self.write_message(json.dumps(json_data))
 
@@ -60,6 +60,7 @@ def main():
         (r'/websocket', WebSocketChatHandler),
         #(r'/static/(.*)', tornado.web.StaticFileHandldder, {'path': 'static'}),
         #(r'/flags/(.*)', tornado.web.StaticFileHandler, {'path': 'static/flags'}),
+	(r'/db/(.*)', tornado.web.StaticFileHandler, {'path': 'db'}),
         (r'/', IndexHandler)
     ]
 

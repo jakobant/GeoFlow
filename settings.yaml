@@ -6,8 +6,8 @@ module:
     name: http
     demo: "true"
     config:
-        file: "/home/jakobant/PycharmProjects/demokobbi/logs/kobbi.log"
-        file_type: flat
+        file: "./public-access-json.log"
+        file_type: json
         exclude_status: ""
         udp_server: 127.0.0.1
         udp_port: 9991

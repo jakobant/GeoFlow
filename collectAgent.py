@@ -20,7 +20,7 @@ class SuperAgent:
                 message = agent.parse_log(line)
                 if message:
                     server.send_message(message)
-                if demo and c > 100:
+                if demo and c > 50:
                     sleep(1)
                     c = 0
                 c += 1

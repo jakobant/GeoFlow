@@ -23,8 +23,8 @@ body {
   font-family: monospace;
   font-size:10px;
   position:fixed;
-  width:50%;
-  height:100px;
+  width:25%;
+  height:200px;
   color:white;
   background-color:black;
   padding:5px;
@@ -85,12 +85,20 @@ body {
 </style>
 
 <body>
-<script src="http://d3js.org/d3.v3.min.js"></script>
-  <script src="http://d3js.org/topojson.v1.min.js"></script>
+ <center><div id="container1"></div></center>
+ <div id="attackdiv"></div>
+<script src="//code.jquery.com/jquery-2.1.1.min.js"></script>
+
+<script src="//cdnjs.cloudflare.com/ajax/libs/d3/3.5.3/d3.min.js"></script>
+<script src="//cdnjs.cloudflare.com/ajax/libs/topojson/1.6.9/topojson.min.js"></script>
+
   <!-- I recommend you host this file on your own, since this will change without warning -->
-  <script src="http://datamaps.github.io/scripts/datamaps.world.min.js?v=1"></script>
-  <div id="container1" style="position: relative; width: 100%; max-height: 1024px;"></div>
+  <script src="/db/datamaps.world.min.js"></script>
+  <div id="container1" style="position: relative; width: 150%; max-height: 1024px;"></div>
 <script>
+    window.isActive = true;
+    $(window).focus(function() { this.isActive = true; });
+    $(window).blur(function() { this.isActive = false; });
     // we maintain a fixed queue of "attacks" via this class
     function FixedQueue( size, initialValues ){
       initialValues = (initialValues || []);
@@ -123,8 +131,8 @@ body {
     FixedQueue.push = FixedQueue.wrapMethod( "push", FixedQueue.trimHead );
     FixedQueue.splice = FixedQueue.wrapMethod( "splice", FixedQueue.trimTail );
     FixedQueue.unshift = FixedQueue.wrapMethod( "unshift", FixedQueue.trimTail );
-    var hits = FixedQueue( 20, [  ] );
-    var boom = FixedQueue( 20, [  ] );
+    var hits = FixedQueue( 25, [  ] );
+    var boom = FixedQueue( 50, [  ] );
     var map = new Datamap({
         scope: 'world',
         element: document.getElementById('container1'),
@@ -147,7 +155,15 @@ body {
         },
 
       })
+    map.bubbles([
+       {name: 'Demo WWW', latitude: 31.9952, longitude: -42.6494, radius: 40, fillKey: 'blue'},
 
+     ], {
+       popupTemplate: function(geo, data) {
+         return "<div class='hoverinfo'>It is " + data.name + "</div>";
+       }
+     })
+   
     var webSock = new WebSocket("ws:/127.0.0.1:8888/websocket");
     webSock.onmessage = function (e) {
     console.log("Got a websocket message...");
@@ -162,21 +178,35 @@ body {
         } else {
             strokeColor = 'blue';
         }
+        if (window.isActive) {
         var stroke = parseInt(msg.count) / 8 + 1;
-                console.log(stroke);
+        //        console.log(stroke);
         //if (stroke > 12) { stroke = 12; }
+        // Atlantic Ocean : 31.995200, -42.649487
         var which_attack = msg.geo.country_name + " - " + msg.geo.city;
         hits.push( { origin : { latitude: msg.geo.latitude, longitude: msg.geo.longitude },
-        destination : { latitude: 64.1234, longitude: -21.8923 } } );
+        destination : { latitude: 31.9952, longitude: -42.6494 } } );
         map.arc(hits, {strokeWidth: stroke, strokeColor: strokeColor});
         // add boom to the bubbles queue
         boom.push( { radius: 7, latitude: msg.geo.latitude, longitude: msg.geo.longitude,
                       fillOpacity: 0.5, attk: which_attack} );
+        boom.push( { radius: 14, latitude: 31.9952, longitude: -42.6494,
+                      fillOpacity: 0.5, attk: 'Demo WWW'} );
         map.bubbles(boom, {
            popupTemplate: function(geo, data) {
            return '<div class="hoverinfo">' + data.attk + '</div>';
         }
         });
+        // update the scrolling attack div
+        $('#attackdiv').append("<div class='countList'>"+ msg.geo.country_shortname + " (" + msg.ip + ") " +
+                                  " <span style='color:red'>status</span> " +
+                                  " (" + msg.status + ") " +
+                                  " <span style='color:steelblue'>(" + msg.method + ")</span> " +
+                                  "</div>");
+        $('#attackdiv').animate({scrollTop: $('#attackdiv').prop("scrollHeight")}, 50);
+        //var countList = $('.countList').size();
+        //if (countList > 20) { $('#attackdiv').empty(); }
+        }
 
     } catch(err) {
         console.log(err)
